@@ -39,6 +39,9 @@ def connect (username, host = "omero-prod.camp.thecrick.org") :
         """
         root = tk.Tk()
         root.withdraw()  # Hide the main window
+        root.lift()            # Lift it above all windows
+        root.attributes("-topmost", True)   # Make sure it stays on top
+        root.after_idle(root.attributes, "-topmost", False)  # Reset "always on top"
             
         # Retrieve password securely
         password = simpledialog.askstring("Password", "Enter your password:", show="*")
@@ -160,13 +163,13 @@ def get_plane(plane_name, primaryPixels, cache=None): # plane_name = (z, c, t) c
 
 # Function to lazily load a plane
 def get_planes(zct_list, pixels):
-    """Lazy load multiple planes using OMERO getPlanes"""
-    start_time = time.time()
+    """Load multiple planes using OMERO getPlanes"""
+    #start_time = time.time()
     
     planes = pixels.getPlanes(zct_list)  # This is a generator, loading only when needed
     
-    end_time = time.time()
-    print(f"Time to load stack = {end_time - start_time:.2f} seconds")
+    #end_time = time.time()
+    #print(f"Time to load stack = {end_time - start_time:.2f} seconds")
     return np.array([plane for plane in planes])  # Ensure correct shape
 
 def get_lazy_stack(img, cache=None):
@@ -413,15 +416,19 @@ def create_image(conn, image_name, dataset_id, key_value_pairs, image_planes, ch
                 dataset=dataset_obj, sourceImageId=sourceImageId, channelList=channelList
             )
         
-        image_id = img_obj.getId().getValue()
-        image_name = img_obj.getName().getValue()
+        image_id = img_obj.getId()#.getValue()
+        image_name = img_obj.getName()#.getValue()
         print(f"Created new image: ID = {image_id}, Name = {image_name}")
 
+        # re-load image object to avoid conflicts
+        img_obj = conn.getObject("Image", image_id)
+
         # set channel names
-        channel_labels = dict(enumerate(channel_names, start=1))
-        conn.setChannelNames('Image', [img_obj.getId()], 
-                             channel_labels
-                            )
+        if (channel_names != None):
+            channel_labels = dict(enumerate(channel_names, start=1))
+            conn.setChannelNames('Image', [img_obj.getId()], 
+                                 channel_labels
+                                )
         
         # set pixel sizes
         if pixel_size_um <= 0:
@@ -448,3 +455,55 @@ def create_image(conn, image_name, dataset_id, key_value_pairs, image_planes, ch
     image_obj = conn.getObject("Image", image_id)
     
     return image_obj
+
+def get_image_id_from_image_name (conn, image_name, project_id=None, dataset_id=None):
+
+    image_ids = None
+    query_service = conn.getQueryService()
+
+    if (dataset_id) :
+        # HQL query
+        hql_query = """
+        SELECT image
+        FROM Dataset AS dataset
+        JOIN dataset.imageLinks AS image_links
+        JOIN image_links.child AS image
+        WHERE image.name = :name
+        AND dataset.id = :id
+        """
+        
+        # Parameters
+        params = ParametersI()
+        params.addId(rlong(dataset_id))
+        params.addString(f"name", rstring(image_name))
+
+        results = query_service.findAllByQuery(hql_query, params)
+        image_ids = [result.id.val for result in results]
+
+    elif (project_id):
+        # HQL query by Project
+        hql_query = """
+        SELECT image
+        FROM Project AS project
+        JOIN project.datasetLinks AS dataset_links
+        JOIN dataset_links.child AS dataset
+        JOIN dataset.imageLinks AS image_links
+        JOIN image_links.child AS image
+        WHERE image.name = :name
+        AND project.id = :id
+        """
+        
+        # Parameters
+        params = ParametersI()
+        params.addId(rlong(project_id))
+        params.addString(f"name", rstring(image_name))
+
+        results = query_service.findAllByQuery(hql_query, params)    
+        image_ids = [result.id.val for result in results]
+    
+    return image_ids
+
+def get_key_value_metadata (img_obj):
+    map_ann = img_obj.getAnnotation()
+    metadata_dict = {k:v for k, v in map_ann.getValue()}
+    return metadata_dict
