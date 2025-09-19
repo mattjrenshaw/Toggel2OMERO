@@ -226,3 +226,122 @@ def calibrate_reference (signal_array, phases, phase_delay_radians, modulation_d
         calibration_phi[x, y] = phase_delay_radians - phi_fitted[x, y] 
     
     return (ref_mean, A_fitted, phi_fitted, offset_fitted, phases, calibration_m, calibration_phi)
+
+class FDFLIM_calibration:
+    def __init__ (self, signal_array, phases, phase_delay_radians, modulation_depth, sine_wave):
+        """
+        Parameters:
+        signal_array (3D Numpy array): series of phase images of reference sample
+        phases (2D Numpy array): phases (radians) of the sine wave
+        phase_delay_radians: theoretical phase delay for reference sample.
+        modulation_depth: theoretical modulation depth for reference sample
+        sine_wave: callable function for a sine wave
+        
+        Returns:
+        x, y (int): pixel coordinates
+        signal_mean (float): average intensity of signal
+        A_fitted, phi_fitted, offset_fitted (float): fitted parameters for signal - Amplitude, Phase shift, offset
+        calibration_m (float): calibrated modulation depth
+        calibration_phi (float): calibrated phase shift
+        
+        """
+        self.signal_array = signal_array
+        self.phases = phases
+        self.phase_delay_radians = phase_delay_radians
+        self.modulation_depth = modulation_depth
+        self.sine_wave = sine_wave
+
+    def fit_pixel(self, x, y):
+        #try:
+        # Extract the signal at the current pixel location
+        signal = self.signal_array[:, x, y]
+
+        # Normalise signal to mean
+        signal_mean = signal.mean()        
+        normalised_signal = signal / signal_mean 
+
+        # Fit the sine wave model to the data
+        popt, _ = curve_fit(self.sine_wave, self.phases, normalised_signal, 
+                            p0=[self.modulation_depth, self.phase_delay_radians, 1.0] # initial values are the expected reference values
+                           )
+
+        # Extract fitted parameters (Amplitude, Phase shift, average/offset)
+        A_fitted, phi_fitted, offset_fitted = popt
+        
+        # Calibrate modulation
+        calibration_m = self.modulation_depth / (A_fitted/offset_fitted)
+
+        # Calculate phase
+        calibration_phi = self.phase_delay_radians - phi_fitted 
+        
+        return x, y, signal_mean, A_fitted, phi_fitted, offset_fitted, calibration_m, calibration_phi
+        #except Exception:
+         #   return x, y, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+class FDFLIM_fitter:
+    def __init__ (self, sample_phase_series, ref_mean, A_fitted, phi_fitted, offset_fitted, calibration_m, calibration_phi, phases, frequency, sine_wave):
+        """
+        Parameters:
+        sample_phase_series ():
+        ref_mean ():
+        A_fitted ():
+        phi_fitted ():
+        offset_fitted ():
+        calibration_m ():
+        calibration_phi ():
+        phases ():
+        frequency (float):
+        sine_wave (): callable sine wave function
+
+        Returns:
+        """
+        
+        self.sample_phase_series = sample_phase_series
+        self.ref_mean = ref_mean
+        self.A_fitted = A_fitted
+        self.phi_fitted = phi_fitted
+        self.offset_fitted = offset_fitted
+        self.calibration_m = calibration_m
+        self.calibration_phi = calibration_phi
+        self.phases = phases
+        self.frequency = frequency
+        self.sine_wave = sine_wave
+
+    def fit_pixel(self, x, y):
+        #try:
+        signal = self.sample_phase_series[:, x, y]
+        signal_mean = signal.mean()
+
+        # normalise signal to reference
+        normalised_signal = signal / self.ref_mean[x, y]
+        popt, _ = curve_fit(
+            self.sine_wave,
+            self.phases,
+            normalised_signal,
+            p0=[
+                self.A_fitted[x, y],
+                self.phi_fitted[x, y],
+                self.offset_fitted[x, y]
+            ],
+            maxfev=1000
+        )
+        # Extract fitted parameters (Amplitude, Phase shift, average/offset)
+        sample_A_fitted, sample_phi_fitted, sample_offset_fitted = popt
+
+        # Calibrate modulation
+        sample_mod = self.calibration_m[x, y] * sample_A_fitted / sample_offset_fitted
+    
+        # Calculate phase
+        sample_phi = abs(self.calibration_phi[x, y] + sample_phi_fitted)
+        
+        # Calculate lifetimes
+        phase_lifetime_ps = (np.tan(sample_phi) / (2 * np.pi * self.frequency)) * 1e12
+        mod_lifetime_ps = (np.sqrt(1 / sample_mod**2 - 1) / (2 * np.pi * self.frequency)) * 1e12
+
+        # Calculate g and s values for phasor plotting    
+        g = sample_mod * np.cos(sample_phi) # g value
+        s = sample_mod * np.sin(sample_phi) # s value
+
+        return x, y, g, s, phase_lifetime_ps, mod_lifetime_ps, signal_mean
+        #except Exception:
+        #    return x, y, np.nan, np.nan, np.nan, np.nan, np.nan
