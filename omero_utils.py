@@ -507,3 +507,43 @@ def get_key_value_metadata (img_obj):
     map_ann = img_obj.getAnnotation()
     metadata_dict = {k:v for k, v in map_ann.getValue()}
     return metadata_dict
+
+def find_images_in_dataset_by_hql(conn, dataset_id, key, value):
+    key = str(key)
+    value = str(value)
+    query_service = conn.getQueryService()
+    
+    # HQL query
+    hql_query = """
+    SELECT image
+    FROM Dataset AS dataset
+    JOIN dataset.imageLinks AS image_links
+    JOIN image_links.child AS image
+    JOIN image.annotationLinks AS annotation_links
+    JOIN annotation_links.child AS annotation
+    JOIN annotation.mapValue as map_value
+    WHERE TYPE(annotation) = MapAnnotation
+    AND dataset.id = :id
+    AND map_value.name = :key
+    AND map_value.value = :value
+    """
+
+    # Parameters
+    params = ParametersI()
+    params.addId(rlong(dataset_id))
+    params.addString(f"key", rstring(key))
+    params.addString(f"value", rstring(value))
+
+    results = query_service.findAllByQuery(hql_query, params)
+
+    return results
+
+def find_image_ids_in_dataset_kv_dict (conn, dataset_id, kv_dict):
+    list_of_results = []
+    for i, (k, v) in enumerate(kv_dict.items()):
+        results = find_images_in_dataset_by_hql(conn, dataset_id, k, v)
+        image_ids = [result.id.val for result in results]
+        
+        list_of_results.append(set(image_ids))
+    common_values = list(set.intersection(*list_of_results))
+    return common_values
